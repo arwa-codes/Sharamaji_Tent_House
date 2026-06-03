@@ -1,4 +1,4 @@
-PHASE 1 – FOUNDATION & DATA MANAGEMENT
+## PHASE 1 – FOUNDATION & DATA MANAGEMENT
 
 Goal:
 Build the basic structure of the system and store data permanently using JSON files.
@@ -25,10 +25,10 @@ Error Handling:
 - Invalid Customer ID
 
 
-PHASE 2 – BOOKING SYSTEM
+## PHASE 2 – BOOKING SYSTEM
 
 Goal:
-Create and manage customer bookings and booking items.
+Create and manage customer bookings and booking items while ensuring valid availability before saving bookings.
 
 Features:
 - Create Booking
@@ -38,6 +38,9 @@ Features:
 - Calculate Total Amount
 - Record Deposit Payment
 - Store Booking Status
+- Check Item Availability
+- Check Date Overlap
+- Prevent Overbooking During Booking Creation
 
 Data Used:
 - customers.json
@@ -49,33 +52,32 @@ Error Handling:
 - Item not found
 - Invalid dates
 - Negative quantity
+- Overlapping booking exceeds available stock
 
 
-PHASE 3 – AVAILABILITY & OVERBOOKING PREVENTION
+## PHASE 3 – AVAILABILITY & SCHEDULING
 
 Goal:
-Prevent overlapping bookings and manage item availability for selected dates.
+Provide availability tracking, booking conflict reporting, and calendar-based scheduling tools.
 
 Features:
-- Check Item Availability
-- Calculate booked quantity for overlapping dates
-- Prevent Overbooking
 - Show Available Quantity
 - Booking Conflict Detection
-- Calendar-based booking check in terminal
+- Availability Reports
+- Show Available Items
+- Calendar-based Booking Check in Terminal
+- Calendar View for Bookings and Availability
 
 Related Requirements:
-- Prevent overlapping bookings
-- Check item availability
 - Show available items
+- Display bookings and availability in a calendar view
 
 Error Handling:
-- Overlapping booking exceeds available stock
 - Invalid date range
 - Return before delivery date
 
 
-PHASE 4 – PAYMENTS, RETURNS & DAMAGE TRACKING
+## PHASE 4 – PAYMENTS, RETURNS & DAMAGE TRACKING
 
 Goal:
 Manage payments, returned items, damaged items, and pending balances.
@@ -102,7 +104,7 @@ Error Handling:
 - Invalid return records
 
 
-PHASE 5 – REPORTS, DASHBOARD & FINAL INTEGRATION
+## PHASE 5 – REPORTS, DASHBOARD & FINAL INTEGRATION
 
 Goal:
 Provide daily operational reports, availability reports, and complete system integration.
@@ -116,7 +118,6 @@ Features:
 - Customer Booking History
 - Damage Reports
 - Revenue Summary
-- Terminal Calendar View
 - Final System Testing
 
 Final Validation:
