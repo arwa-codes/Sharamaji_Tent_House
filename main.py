@@ -133,6 +133,15 @@ def add_customer():
         return
         
     phone = input("Enter Phone: ").strip()
+    if not phone.isdigit() or len(phone) != 10:
+        print("[ERROR] Phone number must be exactly 10 digits.")
+        return
+
+    duplicate = next((c for c in customers if c['phone'] == phone), None)
+    if duplicate:
+        print(f"[ERROR] A customer with this phone number already exists: {duplicate['name']} (ID: {duplicate['customer_id']})")
+        return
+
     address = input("Enter Address: ").strip()
 
     new_customer = {
@@ -224,6 +233,9 @@ def add_inventory_item():
 
         rent_input = input("Enter Rent Per Day (₹): ")
         rent = Decimal(rent_input)
+        if rent <= 0:
+            print("[ERROR] Rent per day must be a positive number.")
+            return
 
         new_item = {
             "item_id": item_id,
@@ -285,7 +297,12 @@ def update_inventory_item():
             found_item['total_quantity'] = q
             
         rent_in = input(f"New Rent [{found_item['rent_per_day']}]: ").strip()
-        if rent_in: found_item['rent_per_day'] = Decimal(rent_in)
+        if rent_in:
+            r = Decimal(rent_in)
+            if r <= 0:
+                print("[ERROR] Rent per day must be a positive number.")
+                return
+            found_item['rent_per_day'] = r
 
         if save_json('inventory.json', inventory):
             print("[SUCCESS] Item updated successfully!")
@@ -375,18 +392,17 @@ def change_unit_status():
 
     print("\n--- Change Equipment Unit Status ---")
     unit = find_record_by_name_or_id(units, "unit_id", "unit_name")
+    if not unit:
+        return
             
-    if unit:
-        print(f"Current Status of {unit['unit_id']}: {unit['status']}")
-        new_status = get_validated_input("Enter new status", VALID_STATUSES, allow_blank=True)
-        if new_status:
-            unit['status'] = new_status
-            if save_json('equipment_units.json', units):
-                print(f"[SUCCESS] Status for {unit['unit_id']} updated to {new_status}.")
-        else:
-            print("[INFO] No change made.")
+    print(f"Current Status of {unit['unit_id']}: {unit['status']}")
+    new_status = get_validated_input("Enter new status", VALID_STATUSES, allow_blank=True)
+    if new_status:
+        unit['status'] = new_status
+        if save_json('equipment_units.json', units):
+            print(f"[SUCCESS] Status for {unit['unit_id']} updated to {new_status}.")
     else:
-        print(f"[ERROR] Unit ID '{uid}' not found.")
+        print("[INFO] No change made.")
 
 def delete_equipment_unit():
     units = load_json('equipment_units.json')
