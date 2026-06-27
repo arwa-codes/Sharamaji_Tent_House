@@ -2,6 +2,7 @@ import json
 import os
 from decimal import Decimal
 from datetime import datetime, timedelta
+import calendar
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -823,6 +824,212 @@ def booking_menu():
         elif choice == '5': break
         else: print("Invalid choice, please select 1-5.")
 
+def check_item_availability_cli():
+    inventory = load_json('inventory.json')
+    if not inventory:
+        if inventory is None: return
+        print("\nInventory is empty.")
+        return
+        
+    print("\n--- Check Item Availability ---")
+    item = find_record_by_name_or_id(inventory, "item_id", "name")
+    if not item:
+        return
+        
+    while True:
+        start_str = input("Enter Start Date (YYYY-MM-DD): ").strip()
+        start = parse_date(start_str)
+        if start: break
+        print("[ERROR] Invalid date format. Use YYYY-MM-DD.")
+        
+    while True:
+        end_str = input("Enter End Date (YYYY-MM-DD): ").strip()
+        end = parse_date(end_str)
+        if not end:
+            print("[ERROR] Invalid date format. Use YYYY-MM-DD.")
+            continue
+        if end < start:
+            print("[ERROR] End date cannot be before start date.")
+            continue
+        break
+        
+    avail = calculate_item_availability(item['item_id'], start_str, end_str)
+    units = load_json('equipment_units.json')
+    total_unavailable = len([u for u in units if u['item_id'] == item['item_id'] and u['status'] in ['Maintenance', 'Broken']])
+    total_stock = max(0, item['total_quantity'] - total_unavailable)
+    
+    print(f"\nAvailability for '{item['name']}' ({item['item_id']}) from {start_str} to {end_str}:")
+    print(f"Total Catalog Stock   : {item['total_quantity']}")
+    print(f"Broken/Maintenance   : {total_unavailable}")
+    print(f"Effective Total Stock: {total_stock}")
+    print(f"Available Quantity   : {avail}")
+    print(f"Booked Quantity      : {total_stock - avail}")
+    
+    if total_stock - avail > 0:
+        show_conflicting_bookings(item['item_id'], start, end)
+
+def view_availability_report_cli():
+    inventory = load_json('inventory.json')
+    if not inventory:
+        if inventory is None: return
+        print("\nInventory is empty.")
+        return
+        
+    print("\n--- View Availability Report ---")
+    while True:
+        start_str = input("Enter Start Date (YYYY-MM-DD): ").strip()
+        start = parse_date(start_str)
+        if start: break
+        print("[ERROR] Invalid date format. Use YYYY-MM-DD.")
+        
+    while True:
+        end_str = input("Enter End Date (YYYY-MM-DD): ").strip()
+        end = parse_date(end_str)
+        if not end:
+            print("[ERROR] Invalid date format. Use YYYY-MM-DD.")
+            continue
+        if end < start:
+            print("[ERROR] End date cannot be before start date.")
+            continue
+        break
+        
+    print("\n" + "="*95)
+    print(f" AVAILABILITY REPORT FROM {start_str} TO {end_str}")
+    print("="*95)
+    print(f"{'Item ID':<8} | {'Item Name':<25} | {'Catalog Qty':<12} | {'Unavailable':<12} | {'Peak Booked':<12} | {'Available':<10}")
+    print("-" * 95)
+    for item in inventory:
+        units = load_json('equipment_units.json')
+        total_unavailable = len([u for u in units if u['item_id'] == item['item_id'] and u['status'] in ['Maintenance', 'Broken']])
+        total_stock = max(0, item['total_quantity'] - total_unavailable)
+        avail = calculate_item_availability(item['item_id'], start_str, end_str)
+        peak_booked = total_stock - avail
+        print(f"{item['item_id']:<8} | {item['name']:<25} | {item['total_quantity']:<12} | {total_unavailable:<12} | {peak_booked:<12} | {avail:<10}")
+    print("="*95)
+
+def show_available_items_cli():
+    inventory = load_json('inventory.json')
+    if not inventory:
+        if inventory is None: return
+        print("\nInventory is empty.")
+        return
+        
+    print("\n--- Show Available Items ---")
+    while True:
+        start_str = input("Enter Start Date (YYYY-MM-DD): ").strip()
+        start = parse_date(start_str)
+        if start: break
+        print("[ERROR] Invalid date format. Use YYYY-MM-DD.")
+        
+    while True:
+        end_str = input("Enter End Date (YYYY-MM-DD): ").strip()
+        end = parse_date(end_str)
+        if not end:
+            print("[ERROR] Invalid date format. Use YYYY-MM-DD.")
+            continue
+        if end < start:
+            print("[ERROR] End date cannot be before start date.")
+            continue
+        break
+        
+    print("\n" + "="*80)
+    print(f" AVAILABLE ITEMS FROM {start_str} TO {end_str}")
+    print("="*80)
+    print(f"{'Item ID':<8} | {'Item Name':<25} | {'Category':<15} | {'Available Qty':<15} | {'Rent/Day':<10}")
+    print("-" * 80)
+    count = 0
+    for item in inventory:
+        avail = calculate_item_availability(item['item_id'], start_str, end_str)
+        if avail > 0:
+            print(f"{item['item_id']:<8} | {item['name']:<25} | {item['category']:<15} | {avail:<15} | ₹{item['rent_per_day']:<10}")
+            count += 1
+    if count == 0:
+        print("No items available during this period.")
+    print("="*80)
+
+def calendar_view_cli():
+    print("\n--- Calendar View (Bookings & Availability) ---")
+    month_input = input("Enter Month (1-12) [Current]: ").strip()
+    year_input = input("Enter Year (YYYY) [Current]: ").strip()
+    
+    now = datetime.now()
+    try:
+        month = int(month_input) if month_input else now.month
+        if not (1 <= month <= 12):
+            raise ValueError()
+    except ValueError:
+        print("[ERROR] Invalid month. Using current month.")
+        month = now.month
+        
+    try:
+        year = int(year_input) if year_input else now.year
+        if not (1000 <= year <= 9999):
+            raise ValueError()
+    except ValueError:
+        print("[ERROR] Invalid year. Using current year.")
+        year = now.year
+        
+    print("\nWould you like to track availability for a specific item on the calendar?")
+    choice = input("Enter 'y' to choose an item, or press Enter for general bookings calendar: ").strip().lower()
+    item_id = None
+    item_name = None
+    if choice == 'y':
+        inventory = load_json('inventory.json')
+        item = find_record_by_name_or_id(inventory, "item_id", "name")
+        if item:
+            item_id = item['item_id']
+            item_name = item['name']
+            
+    cal = calendar.monthcalendar(year, month)
+    month_name = calendar.month_name[month]
+    
+    print("\n=========================================================================")
+    if item_id:
+        print(f"   AVAILABILITY CALENDAR FOR: {item_name} ({item_id})")
+        print("   Format: Day:(Available Stock)")
+    else:
+        print("   GENERAL BOOKINGS CALENDAR (Number of active bookings)")
+        print("   Format: Day:[Active Bookings]")
+    print(f"   {month_name} {year}")
+    print("=========================================================================")
+    print("  Mon       Tue       Wed       Thu       Fri       Sat       Sun")
+    print("-------------------------------------------------------------------------")
+    
+    for week in cal:
+        week_str = ""
+        for day in week:
+            if day == 0:
+                week_str += " " * 10
+            else:
+                date_str = f"{year}-{month:02d}-{day:02d}"
+                if item_id:
+                    avail = calculate_item_availability(item_id, date_str, date_str)
+                    val = f"{day}:({avail})"
+                else:
+                    bookings = load_json('bookings.json')
+                    n_bookings = sum(1 for b in bookings if b.get('status') != 'Cancelled' and b['delivery_date'] <= date_str <= b['return_date'])
+                    val = f"{day}:[{n_bookings}]"
+                week_str += f"{val:<10}"
+        print(week_str)
+    print("=========================================================================")
+
+def availability_menu():
+    while True:
+        print("\n--- Availability & Scheduling ---")
+        print("1. Check Item Availability for Dates")
+        print("2. View Availability Report for Date Range")
+        print("3. Show Available Items for Date Range")
+        print("4. Calendar-based Booking Check")
+        print("5. Back to Main Menu")
+        
+        choice = input("\nSelect an Option (1-5): ")
+        if choice == '1': check_item_availability_cli()
+        elif choice == '2': view_availability_report_cli()
+        elif choice == '3': show_available_items_cli()
+        elif choice == '4': calendar_view_cli()
+        elif choice == '5': break
+        else: print("Invalid choice, please select 1-5.")
+
 # --- Main Program Menu ---
 
 def main_menu():
@@ -834,9 +1041,10 @@ def main_menu():
         print("2. Inventory Management")
         print("3. Equipment Unit Management")
         print("4. Booking Management")
-        print("5. Exit")
+        print("5. Availability & Scheduling")
+        print("6. Exit")
         
-        choice = input("\nSelect an Option (1-5): ")
+        choice = input("\nSelect an Option (1-6): ")
 
         if choice == '1':
             customer_menu()
@@ -847,10 +1055,12 @@ def main_menu():
         elif choice == '4':
             booking_menu()
         elif choice == '5':
+            availability_menu()
+        elif choice == '6':
             print("Thank you for using the system. Goodbye!")
             break
         else:
-            print("Invalid choice, please select 1-5.")
+            print("Invalid choice, please select 1-6.")
 
 def customer_menu():
     while True:
