@@ -1,6 +1,7 @@
 import json
 import os
 from decimal import Decimal
+from datetime import datetime, timedelta
 
 class DecimalEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -37,6 +38,16 @@ def load_json(filename):
             if "inventory.json" in filename:
                 for item in data:
                     item['rent_per_day'] = Decimal(item.get('rent_per_day', 0))
+            elif "bookings.json" in filename:
+                for b in data:
+                    b['total_amount'] = Decimal(b.get('total_amount', 0))
+                    b['deposit_paid'] = Decimal(b.get('deposit_paid', 0))
+                    b['remaining_amount'] = Decimal(b.get('remaining_amount', 0))
+                    b['discount'] = Decimal(b.get('discount', 0))
+            elif "booking_items.json" in filename:
+                for bi in data:
+                    bi['price_per_day'] = Decimal(bi.get('price_per_day', 0))
+                    bi['total'] = Decimal(bi.get('total', 0))
             return data
     except json.JSONDecodeError:
         print(f"\n[ERROR] File '{filename}' is corrupted and cannot be loaded.")
@@ -116,6 +127,71 @@ def find_record_by_name_or_id(data, key_id, key_name):
             return None
             
     return results[0]
+
+def parse_date(date_str):
+    """Parses a date string (YYYY-MM-DD) into a datetime.date object. Returns None if invalid."""
+    try:
+        return datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+def calculate_item_availability(item_id, start_date_str, end_date_str, exclude_booking_id=None):
+    """Calculates available quantity of an item within a date range, taking active bookings and broken/maintenance units into account."""
+    inventory = load_json('inventory.json')
+    item = next((i for i in inventory if i['item_id'] == item_id), None)
+    if not item:
+        return 0
+        
+    # Subtract maintenance or broken units from total quantity to get effective stock
+    units = load_json('equipment_units.json')
+    total_unavailable = len([u for u in units if u['item_id'] == item_id and u['status'] in ['Maintenance', 'Broken']])
+    total_stock = max(0, item['total_quantity'] - total_unavailable)
+    
+    start_date = parse_date(start_date_str)
+    end_date = parse_date(end_date_str)
+    if not start_date or not end_date or start_date > end_date:
+        return 0
+        
+    bookings = load_json('bookings.json')
+    booking_items = load_json('booking_items.json')
+    
+    # Identify active (not cancelled) bookings that overlap with the proposed range:
+    # Overlap condition: b_start <= end_date and b_end >= start_date
+    overlapping_booking_ids = set()
+    for b in bookings:
+        if b.get('status') == 'Cancelled':
+            continue
+        if b['booking_id'] == exclude_booking_id:
+            continue
+        
+        b_start = parse_date(b['delivery_date'])
+        b_end = parse_date(b['return_date'])
+        if b_start and b_end:
+            if b_start <= end_date and b_end >= start_date:
+                overlapping_booking_ids.add(b['booking_id'])
+                
+    # Group booking items by booking_id
+    items_by_booking = {}
+    for bi in booking_items:
+        if bi['item_id'] == item_id and bi['booking_id'] in overlapping_booking_ids:
+            items_by_booking[bi['booking_id']] = items_by_booking.get(bi['booking_id'], 0) + int(bi['quantity'])
+            
+    # Calculate the quantity booked on each single day in the proposed range [start_date, end_date]
+    curr_date = start_date
+    max_booked = 0
+    while curr_date <= end_date:
+        booked_today = 0
+        for b in bookings:
+            if b['booking_id'] in items_by_booking:
+                b_start = parse_date(b['delivery_date'])
+                b_end = parse_date(b['return_date'])
+                if b_start <= curr_date <= b_end:
+                    booked_today += items_by_booking[b['booking_id']]
+        if booked_today > max_booked:
+            max_booked = booked_today
+        curr_date += timedelta(days=1)
+        
+    return max(0, total_stock - max_booked)
 
 # --- Customer Management Functions ---
 
@@ -201,8 +277,11 @@ def delete_customer():
 
     confirm = input(f"Are you sure you want to delete '{record['name']}' ({record['customer_id']})? (y/n): ").lower()
     if confirm == 'y':
-        # In Phase 1, there are no bookings to check yet. 
-        # In later phases, we'd check if customer has active bookings.
+        bookings = load_json('bookings.json')
+        linked_bookings = [b for b in bookings if b['customer_id'] == record['customer_id'] and b.get('status') != 'Cancelled']
+        if linked_bookings:
+            print(f"[ERROR] Cannot delete customer '{record['name']}' because they have {len(linked_bookings)} active booking(s).")
+            return
         customers = [c for c in customers if c['customer_id'] != record['customer_id']]
         if save_json('customers.json', customers):
             print(f"[SUCCESS] Customer '{record['name']}' deleted.")
@@ -329,6 +408,14 @@ def delete_inventory_item():
         print(f"[ERROR] Cannot delete '{item['name']}' because it has {len(linked_units)} linked equipment units.")
         return
 
+    booking_items = load_json('booking_items.json')
+    bookings = load_json('bookings.json')
+    active_booking_ids = [b['booking_id'] for b in bookings if b.get('status') != 'Cancelled']
+    linked_bookings = [bi for bi in booking_items if bi['item_id'] == item['item_id'] and bi['booking_id'] in active_booking_ids]
+    if linked_bookings:
+        print(f"[ERROR] Cannot delete '{item['name']}' because it is linked to {len(linked_bookings)} active booking(s).")
+        return
+
     confirm = input(f"Are you sure you want to delete '{item['name']}'? (y/n): ").lower()
     if confirm == 'y':
         inventory = [i for i in inventory if i['item_id'] != item['item_id']]
@@ -423,6 +510,319 @@ def delete_equipment_unit():
     else:
         print("[INFO] Deletion cancelled.")
 
+# --- Booking Management Functions ---
+
+def show_conflicting_bookings(item_id, start_date, end_date):
+    bookings = load_json('bookings.json')
+    booking_items = load_json('booking_items.json')
+    customers = load_json('customers.json')
+    
+    print("\n--- Conflicting Bookings ---")
+    print(f"{'Booking ID':<12} | {'Customer':<20} | {'Delivery':<12} | {'Return':<12} | {'Qty Booked':<10}")
+    print("-" * 75)
+    count = 0
+    for b in bookings:
+        if b.get('status') == 'Cancelled':
+            continue
+        b_start = parse_date(b['delivery_date'])
+        b_end = parse_date(b['return_date'])
+        if b_start and b_end and b_start <= end_date and b_end >= start_date:
+            qty = sum(int(bi['quantity']) for bi in booking_items if bi['booking_id'] == b['booking_id'] and bi['item_id'] == item_id)
+            if qty > 0:
+                cust = next((c for c in customers if c['customer_id'] == b['customer_id']), None)
+                cust_name = cust['name'] if cust else "Unknown"
+                print(f"{b['booking_id']:<12} | {cust_name:<20} | {b['delivery_date']:<12} | {b['return_date']:<12} | {qty:<10}")
+                count += 1
+    if count == 0:
+        print("No conflicting bookings found (deficit could be due to broken/maintenance units).")
+
+def create_booking():
+    customers = load_json('customers.json')
+    inventory = load_json('inventory.json')
+    bookings = load_json('bookings.json')
+    booking_items = load_json('booking_items.json')
+    
+    if customers is None or inventory is None or bookings is None or booking_items is None:
+        return
+        
+    print("\n--- Create New Booking ---")
+    
+    customer = find_record_by_name_or_id(customers, "customer_id", "name")
+    if not customer:
+        print("[ERROR] Customer selection is required to create a booking.")
+        return
+        
+    event_type = input("Enter Event Type (e.g., Wedding, Birthday): ").strip()
+    event_location = input("Enter Event Location: ").strip()
+    
+    while True:
+        del_date_str = input("Enter Delivery Date (YYYY-MM-DD): ").strip()
+        del_date = parse_date(del_date_str)
+        if del_date:
+            break
+        print("[ERROR] Invalid date format. Please use YYYY-MM-DD.")
+        
+    while True:
+        ret_date_str = input("Enter Return Date (YYYY-MM-DD): ").strip()
+        ret_date = parse_date(ret_date_str)
+        if not ret_date:
+            print("[ERROR] Invalid date format. Please use YYYY-MM-DD.")
+            continue
+        if ret_date < del_date:
+            print("[ERROR] Return date cannot be before delivery date.")
+            continue
+        break
+        
+    total_days = max(1, (ret_date - del_date).days)
+    print(f"Total Rental Duration: {total_days} day(s)")
+    
+    temp_items = {}
+    print("\n--- Add Items to Booking (Press Enter with empty query to finish) ---")
+    while True:
+        item = find_record_by_name_or_id(inventory, "item_id", "name")
+        if not item:
+            break
+            
+        qty_str = input(f"Enter Quantity for '{item['name']}': ").strip()
+        if not qty_str:
+            print("[INFO] Item skipped.")
+            continue
+            
+        try:
+            qty = int(qty_str)
+            if qty <= 0:
+                print("[ERROR] Quantity must be positive.")
+                continue
+        except ValueError:
+            print("[ERROR] Invalid quantity.")
+            continue
+            
+        current_added = temp_items.get(item['item_id'], 0)
+        proposed_qty = current_added + qty
+        
+        available = calculate_item_availability(item['item_id'], del_date_str, ret_date_str)
+        if proposed_qty > available:
+            print(f"[ERROR] Cannot book {proposed_qty} units of '{item['name']}'. Only {available} units are available during this period.")
+            show_conflicting_bookings(item['item_id'], del_date, ret_date)
+            continue
+            
+        temp_items[item['item_id']] = proposed_qty
+        print(f"[SUCCESS] Added {qty} x '{item['name']}' to current booking list (Total: {proposed_qty}).")
+        
+    if not temp_items:
+        print("[ERROR] No items added to booking. Booking cancelled.")
+        return
+        
+    total_amount = Decimal(0)
+    for item_id, qty in temp_items.items():
+        item_match = next(i for i in inventory if i['item_id'] == item_id)
+        total_amount += item_match['rent_per_day'] * qty * total_days
+        
+    print(f"\nInitial Subtotal Amount: ₹{total_amount}")
+    
+    discount = Decimal(0)
+    discount_str = input("Enter Discount (₹) [0]: ").strip() or "0"
+    try:
+        discount = Decimal(discount_str)
+        if discount < 0:
+            print("[ERROR] Discount cannot be negative. Set to 0.")
+            discount = Decimal(0)
+    except:
+        print("[ERROR] Invalid numeric discount. Set to 0.")
+        discount = Decimal(0)
+        
+    deposit = Decimal(0)
+    deposit_str = input("Enter Deposit Paid (₹) [0]: ").strip() or "0"
+    try:
+        deposit = Decimal(deposit_str)
+        if deposit < 0:
+            print("[ERROR] Deposit cannot be negative. Set to 0.")
+            deposit = Decimal(0)
+    except:
+        print("[ERROR] Invalid numeric deposit. Set to 0.")
+        deposit = Decimal(0)
+        
+    if discount + deposit > total_amount:
+        print("[ERROR] Discount + Deposit cannot exceed subtotal amount. Booking cancelled.")
+        return
+        
+    remaining = total_amount - discount - deposit
+    
+    booking_id = generate_id("B", bookings, "booking_id")
+    booking_date = datetime.now().strftime("%Y-%m-%d")
+    
+    new_booking = {
+        "booking_id": booking_id,
+        "customer_id": customer['customer_id'],
+        "event_type": event_type,
+        "event_location": event_location,
+        "booking_date": booking_date,
+        "delivery_date": del_date_str,
+        "return_date": ret_date_str,
+        "total_amount": total_amount,
+        "deposit_paid": deposit,
+        "remaining_amount": remaining,
+        "discount": discount,
+        "status": "Confirmed"
+    }
+    
+    new_items_list = []
+    for item_id, qty in temp_items.items():
+        item_match = next(i for i in inventory if i['item_id'] == item_id)
+        bi_id = generate_id("BI", booking_items + new_items_list, "booking_item_id")
+        bi_total = item_match['rent_per_day'] * qty * total_days
+        new_bi = {
+            "booking_item_id": bi_id,
+            "booking_id": booking_id,
+            "item_id": item_id,
+            "quantity": qty,
+            "price_per_day": item_match['rent_per_day'],
+            "total_days": total_days,
+            "total": bi_total
+        }
+        new_items_list.append(new_bi)
+        
+    bookings.append(new_booking)
+    booking_items.extend(new_items_list)
+    
+    if save_json('bookings.json', bookings) and save_json('booking_items.json', booking_items):
+        print(f"\n[SUCCESS] Booking '{booking_id}' created successfully for customer '{customer['name']}'!")
+        print(f"Total Amount: ₹{total_amount} | Discount: ₹{discount} | Deposit Paid: ₹{deposit} | Remaining: ₹{remaining}")
+    else:
+        print("[ERROR] Failed to save booking data.")
+
+def view_bookings():
+    bookings = load_json('bookings.json')
+    customers = load_json('customers.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    print("\n" + "="*115)
+    print(f"{'ID':<8} | {'Customer Name':<25} | {'Delivery':<12} | {'Return':<12} | {'Total':<10} | {'Paid':<10} | {'Remaining':<10} | {'Status':<10}")
+    print("-" * 115)
+    for b in bookings:
+        cust = next((c for c in customers if c['customer_id'] == b['customer_id']), None)
+        cust_name = cust['name'] if cust else "Unknown"
+        print(f"{b['booking_id']:<8} | {cust_name:<25} | {b['delivery_date']:<12} | {b['return_date']:<12} | ₹{b['total_amount']:<9} | ₹{b['deposit_paid']:<9} | ₹{b['remaining_amount']:<9} | {b['status']:<10}")
+    print("="*115)
+
+def view_booking_details():
+    bookings = load_json('bookings.json')
+    customers = load_json('customers.json')
+    booking_items = load_json('booking_items.json')
+    inventory = load_json('inventory.json')
+    
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    print("\n--- Search and View Booking Details ---")
+    booking = find_record_by_name_or_id(bookings, "booking_id", "delivery_date")
+    if not booking:
+        query = input("Enter Customer Name to search bookings: ").strip().lower()
+        if not query:
+            return
+        matching_custs = [c['customer_id'] for c in customers if query in c['name'].lower()]
+        matching_bookings = [b for b in bookings if b['customer_id'] in matching_custs]
+        if not matching_bookings:
+            print("[ERROR] No bookings found for that customer name.")
+            return
+        if len(matching_bookings) > 1:
+            print("\nMultiple bookings found:")
+            for idx, mb in enumerate(matching_bookings):
+                cust = next(c for c in customers if c['customer_id'] == mb['customer_id'])
+                print(f"{idx+1}. {mb['booking_id']} - {cust['name']} ({mb['delivery_date']} to {mb['return_date']})")
+            try:
+                choice = int(input(f"Select 1-{len(matching_bookings)} (or 0 to cancel): "))
+                if 0 < choice <= len(matching_bookings):
+                    booking = matching_bookings[choice-1]
+                else:
+                    return
+            except ValueError:
+                return
+        else:
+            booking = matching_bookings[0]
+            
+    cust = next((c for c in customers if c['customer_id'] == booking['customer_id']), None)
+    print("\n==========================================================================")
+    print(f" BOOKING DETAILS - {booking['booking_id']} ({booking['status']})")
+    print("==========================================================================")
+    if cust:
+        print(f"Customer Name : {cust['name']}")
+        print(f"Phone Number  : {cust['phone']}")
+        print(f"Address       : {cust['address']}")
+    else:
+        print("Customer Name : Unknown Customer")
+    print("-" * 74)
+    print(f"Event Type    : {booking.get('event_type', 'N/A')}")
+    print(f"Location      : {booking.get('event_location', 'N/A')}")
+    print(f"Booking Date  : {booking.get('booking_date', 'N/A')}")
+    print(f"Delivery Date : {booking['delivery_date']}")
+    print(f"Return Date   : {booking['return_date']}")
+    print("-" * 74)
+    
+    items_in_booking = [bi for bi in booking_items if bi['booking_id'] == booking['booking_id']]
+    print(f"{'Item ID':<8} | {'Item Name':<25} | {'Quantity':<8} | {'Rate':<8} | {'Days':<5} | {'Total':<10}")
+    print("-" * 74)
+    for bi in items_in_booking:
+        inv_item = next((i for i in inventory if i['item_id'] == bi['item_id']), None)
+        item_name = inv_item['name'] if inv_item else "Unknown Item"
+        print(f"{bi['item_id']:<8} | {item_name:<25} | {bi['quantity']:<8} | ₹{bi['price_per_day']:<7} | {bi['total_days']:<5} | ₹{bi['total']:<9}")
+    print("-" * 74)
+    print(f"{'Subtotal Amount:':<52} ₹{booking['total_amount']}")
+    print(f"{'Discount:':<52} ₹{booking['discount']}")
+    print(f"{'Deposit Paid:':<52} ₹{booking['deposit_paid']}")
+    print(f"{'Remaining Balance:':<52} ₹{booking['remaining_amount']}")
+    print("==========================================================================")
+
+def cancel_booking():
+    bookings = load_json('bookings.json')
+    customers = load_json('customers.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    print("\n--- Cancel Booking ---")
+    booking = find_record_by_name_or_id(bookings, "booking_id", "delivery_date")
+    if not booking:
+        return
+        
+    if booking['status'] == 'Cancelled':
+        print("[INFO] This booking is already cancelled.")
+        return
+        
+    cust = next((c for c in customers if c['customer_id'] == booking['customer_id']), None)
+    cust_name = cust['name'] if cust else "Unknown"
+    
+    confirm = input(f"Are you sure you want to cancel booking '{booking['booking_id']}' for '{cust_name}'? (y/n): ").lower()
+    if confirm == 'y':
+        booking['status'] = 'Cancelled'
+        if save_json('bookings.json', bookings):
+            print(f"[SUCCESS] Booking '{booking['booking_id']}' has been cancelled.")
+    else:
+        print("[INFO] Cancellation cancelled.")
+
+def booking_menu():
+    while True:
+        print("\n--- Booking Management ---")
+        print("1. Create New Booking")
+        print("2. View All Bookings")
+        print("3. View Booking Details")
+        print("4. Cancel Booking")
+        print("5. Back to Main Menu")
+        
+        choice = input("\nSelect an Option (1-5): ")
+        if choice == '1': create_booking()
+        elif choice == '2': view_bookings()
+        elif choice == '3': view_booking_details()
+        elif choice == '4': cancel_booking()
+        elif choice == '5': break
+        else: print("Invalid choice, please select 1-5.")
+
 # --- Main Program Menu ---
 
 def main_menu():
@@ -433,9 +833,10 @@ def main_menu():
         print("1. Customer Management")
         print("2. Inventory Management")
         print("3. Equipment Unit Management")
-        print("4. Exit")
+        print("4. Booking Management")
+        print("5. Exit")
         
-        choice = input("\nSelect an Option (1-4): ")
+        choice = input("\nSelect an Option (1-5): ")
 
         if choice == '1':
             customer_menu()
@@ -444,10 +845,12 @@ def main_menu():
         elif choice == '3':
             equipment_menu()
         elif choice == '4':
+            booking_menu()
+        elif choice == '5':
             print("Thank you for using the system. Goodbye!")
             break
         else:
-            print("Invalid choice, please select 1-4.")
+            print("Invalid choice, please select 1-5.")
 
 def customer_menu():
     while True:
