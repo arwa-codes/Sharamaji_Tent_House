@@ -49,6 +49,16 @@ def load_json(filename):
                 for bi in data:
                     bi['price_per_day'] = Decimal(bi.get('price_per_day', 0))
                     bi['total'] = Decimal(bi.get('total', 0))
+            elif "payments.json" in filename:
+                for p in data:
+                    p['payment_amount'] = Decimal(p.get('payment_amount', 0))
+            elif "returns.json" in filename:
+                for r in data:
+                    r['returned_quantity'] = int(r.get('returned_quantity', 0))
+                    r['damaged_quantity'] = int(r.get('damaged_quantity', 0))
+                    r['missing_quantity'] = int(r.get('missing_quantity', 0))
+                    r['late_charges'] = Decimal(r.get('late_charges', 0))
+                    r['extra_charges'] = Decimal(r.get('extra_charges', 0))
             return data
     except json.JSONDecodeError:
         print(f"\n[ERROR] File '{filename}' is corrupted and cannot be loaded.")
@@ -311,7 +321,7 @@ def add_inventory_item():
             print("[ERROR] Quantity cannot be negative.")
             return
 
-        rent_input = input("Enter Rent Per Day (₹): ")
+        rent_input = input("Enter Rent Per Day (Rs.): ")
         rent = Decimal(rent_input)
         if rent <= 0:
             print("[ERROR] Rent per day must be a positive number.")
@@ -345,7 +355,7 @@ def view_inventory():
     print(f"{'ID':<8} | {'Item Name':<25} | {'Category':<15} | {'Qty':<5} | {'Rent':<10}")
     print("-" * 80)
     for item in inventory:
-        print(f"{item['item_id']:<8} | {item['name']:<25} | {item['category']:<15} | {item['total_quantity']:<5} | ₹{item['rent_per_day']}")
+        print(f"{item['item_id']:<8} | {item['name']:<25} | {item['category']:<15} | {item['total_quantity']:<5} | Rs.{item['rent_per_day']}")
     print("="*80)
 
 def update_inventory_item():
@@ -619,10 +629,10 @@ def create_booking():
         item_match = next(i for i in inventory if i['item_id'] == item_id)
         total_amount += item_match['rent_per_day'] * qty * total_days
         
-    print(f"\nInitial Subtotal Amount: ₹{total_amount}")
+    print(f"\nInitial Subtotal Amount: Rs.{total_amount}")
     
     discount = Decimal(0)
-    discount_str = input("Enter Discount (₹) [0]: ").strip() or "0"
+    discount_str = input("Enter Discount (Rs.) [0]: ").strip() or "0"
     try:
         discount = Decimal(discount_str)
         if discount < 0:
@@ -633,7 +643,7 @@ def create_booking():
         discount = Decimal(0)
         
     deposit = Decimal(0)
-    deposit_str = input("Enter Deposit Paid (₹) [0]: ").strip() or "0"
+    deposit_str = input("Enter Deposit Paid (Rs.) [0]: ").strip() or "0"
     try:
         deposit = Decimal(deposit_str)
         if deposit < 0:
@@ -688,7 +698,7 @@ def create_booking():
     
     if save_json('bookings.json', bookings) and save_json('booking_items.json', booking_items):
         print(f"\n[SUCCESS] Booking '{booking_id}' created successfully for customer '{customer['name']}'!")
-        print(f"Total Amount: ₹{total_amount} | Discount: ₹{discount} | Deposit Paid: ₹{deposit} | Remaining: ₹{remaining}")
+        print(f"Total Amount: Rs.{total_amount} | Discount: Rs.{discount} | Deposit Paid: Rs.{deposit} | Remaining: Rs.{remaining}")
     else:
         print("[ERROR] Failed to save booking data.")
 
@@ -706,7 +716,7 @@ def view_bookings():
     for b in bookings:
         cust = next((c for c in customers if c['customer_id'] == b['customer_id']), None)
         cust_name = cust['name'] if cust else "Unknown"
-        print(f"{b['booking_id']:<8} | {cust_name:<25} | {b['delivery_date']:<12} | {b['return_date']:<12} | ₹{b['total_amount']:<9} | ₹{b['deposit_paid']:<9} | ₹{b['remaining_amount']:<9} | {b['status']:<10}")
+        print(f"{b['booking_id']:<8} | {cust_name:<25} | {b['delivery_date']:<12} | {b['return_date']:<12} | Rs.{b['total_amount']:<9} | Rs.{b['deposit_paid']:<9} | Rs.{b['remaining_amount']:<9} | {b['status']:<10}")
     print("="*115)
 
 def view_booking_details():
@@ -771,12 +781,12 @@ def view_booking_details():
     for bi in items_in_booking:
         inv_item = next((i for i in inventory if i['item_id'] == bi['item_id']), None)
         item_name = inv_item['name'] if inv_item else "Unknown Item"
-        print(f"{bi['item_id']:<8} | {item_name:<25} | {bi['quantity']:<8} | ₹{bi['price_per_day']:<7} | {bi['total_days']:<5} | ₹{bi['total']:<9}")
+        print(f"{bi['item_id']:<8} | {item_name:<25} | {bi['quantity']:<8} | Rs.{bi['price_per_day']:<7} | {bi['total_days']:<5} | Rs.{bi['total']:<9}")
     print("-" * 74)
-    print(f"{'Subtotal Amount:':<52} ₹{booking['total_amount']}")
-    print(f"{'Discount:':<52} ₹{booking['discount']}")
-    print(f"{'Deposit Paid:':<52} ₹{booking['deposit_paid']}")
-    print(f"{'Remaining Balance:':<52} ₹{booking['remaining_amount']}")
+    print(f"{'Subtotal Amount:':<52} Rs.{booking['total_amount']}")
+    print(f"{'Discount:':<52} Rs.{booking['discount']}")
+    print(f"{'Deposit Paid:':<52} Rs.{booking['deposit_paid']}")
+    print(f"{'Remaining Balance:':<52} Rs.{booking['remaining_amount']}")
     print("==========================================================================")
 
 def cancel_booking():
@@ -806,6 +816,411 @@ def cancel_booking():
             print(f"[SUCCESS] Booking '{booking['booking_id']}' has been cancelled.")
     else:
         print("[INFO] Cancellation cancelled.")
+
+def record_payment():
+    bookings = load_json('bookings.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    print("\n--- Record Payment ---")
+    booking = find_record_by_name_or_id(bookings, "booking_id", "delivery_date")
+    if not booking:
+        return
+        
+    if booking['status'] == 'Cancelled':
+        print("[ERROR] Cannot record payment for a cancelled booking.")
+        return
+        
+    payments = load_json('payments.json')
+    if payments is None:
+        return
+        
+    print(f"\nBooking ID: {booking['booking_id']}")
+    print(f"Total Rental Amount: Rs.{booking['total_amount']}")
+    print(f"Discount Applied: Rs.{booking['discount']}")
+    print(f"Deposit Paid: Rs.{booking['deposit_paid']}")
+    
+    # Calculate total payments made already
+    booking_payments = [p for p in payments if p['booking_id'] == booking['booking_id']]
+    total_paid_after_deposit = sum(Decimal(p['payment_amount']) for p in booking_payments)
+    
+    current_remaining = booking['remaining_amount']
+    print(f"Total Payments Made: Rs.{total_paid_after_deposit}")
+    print(f"Current Remaining Balance: Rs.{current_remaining}")
+    
+    if current_remaining <= 0:
+        print("[INFO] This booking is already fully paid.")
+        return
+        
+    print("\nSelect Payment Type:")
+    print("1. Full Payment")
+    print("2. Partial Payment")
+    choice = input("Select Option (1-2): ").strip()
+    
+    if choice == '1':
+        payment_amount = current_remaining
+        print(f"Selected Full Payment: Rs.{payment_amount}")
+    elif choice == '2':
+        amount_str = input("Enter Payment Amount (Rs.): ").strip()
+        try:
+            payment_amount = Decimal(amount_str)
+            if payment_amount <= 0:
+                print("[ERROR] Payment amount must be a positive number.")
+                return
+            if payment_amount > current_remaining:
+                print(f"[ERROR] Payment amount greater than remaining balance (Rs.{current_remaining}).")
+                return
+        except Exception as e:
+            print(f"[ERROR] Invalid numeric amount: {e}")
+            return
+    else:
+        print("[ERROR] Invalid choice. Payment cancelled.")
+        return
+        
+    payment_id = generate_id("P", payments, "payment_id")
+    payment_date = datetime.now().strftime("%Y-%m-%d")
+    
+    new_payment = {
+        "payment_id": payment_id,
+        "booking_id": booking['booking_id'],
+        "payment_amount": payment_amount,
+        "payment_date": payment_date
+    }
+    
+    payments.append(new_payment)
+    booking['remaining_amount'] = current_remaining - payment_amount
+    
+    if save_json('payments.json', payments) and save_json('bookings.json', bookings):
+        print(f"\n[SUCCESS] Payment of Rs.{payment_amount} recorded successfully!")
+        print(f"New Remaining Balance: Rs.{booking['remaining_amount']}")
+    else:
+        print("[ERROR] Failed to save payment record.")
+
+def apply_discount_to_booking():
+    bookings = load_json('bookings.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    print("\n--- Apply Discount ---")
+    booking = find_record_by_name_or_id(bookings, "booking_id", "delivery_date")
+    if not booking:
+        return
+        
+    if booking['status'] == 'Cancelled':
+        print("[ERROR] Cannot apply discount to a cancelled booking.")
+        return
+    if booking['status'] == 'Closed':
+        print("[ERROR] Cannot apply discount to a closed booking.")
+        return
+        
+    print(f"\nBooking ID: {booking['booking_id']}")
+    print(f"Total Amount: Rs.{booking['total_amount']}")
+    print(f"Current Discount Applied: Rs.{booking['discount']}")
+    print(f"Current Remaining Balance: Rs.{booking['remaining_amount']}")
+    
+    discount_str = input("Enter Additional Discount Amount (Rs.): ").strip()
+    try:
+        additional_discount = Decimal(discount_str)
+        if additional_discount <= 0:
+            print("[ERROR] Discount amount must be positive.")
+            return
+        if additional_discount > booking['remaining_amount']:
+            print("[ERROR] Additional discount cannot exceed the remaining balance.")
+            return
+    except Exception as e:
+        print(f"[ERROR] Invalid numeric amount: {e}")
+        return
+        
+    booking['discount'] += additional_discount
+    booking['remaining_amount'] -= additional_discount
+    
+    if save_json('bookings.json', bookings):
+        print(f"\n[SUCCESS] Additional discount of Rs.{additional_discount} applied successfully!")
+        print(f"New Total Discount: Rs.{booking['discount']}")
+        print(f"New Remaining Balance: Rs.{booking['remaining_amount']}")
+    else:
+        print("[ERROR] Failed to save booking details.")
+
+def record_return():
+    bookings = load_json('bookings.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    print("\n--- Record Return & Damage ---")
+    booking = find_record_by_name_or_id(bookings, "booking_id", "delivery_date")
+    if not booking:
+        return
+        
+    if booking['status'] == 'Cancelled':
+        print("[ERROR] Cannot record returns for a cancelled booking.")
+        return
+    if booking['status'] == 'Closed':
+        print("[ERROR] This booking is already closed.")
+        return
+        
+    booking_items = load_json('booking_items.json')
+    inventory = load_json('inventory.json')
+    returns = load_json('returns.json')
+    
+    if booking_items is None or inventory is None or returns is None:
+        return
+        
+    items_in_booking = [bi for bi in booking_items if bi['booking_id'] == booking['booking_id']]
+    if not items_in_booking:
+        print("[ERROR] No items found in this booking.")
+        return
+        
+    print(f"\nItems in Booking '{booking['booking_id']}':")
+    
+    returns_added = []
+    any_return_recorded = False
+    
+    for bi in items_in_booking:
+        item_id = bi['item_id']
+        inv_item = next((i for i in inventory if i['item_id'] == item_id), None)
+        item_name = inv_item['name'] if inv_item else "Unknown Item"
+        
+        item_returns = [r for r in returns if r['booking_id'] == booking['booking_id'] and r['item_id'] == item_id]
+        already_returned = sum(r['returned_quantity'] for r in item_returns)
+        already_damaged = sum(r['damaged_quantity'] for r in item_returns)
+        already_missing = sum(r['missing_quantity'] for r in item_returns)
+        
+        total_accounted = already_returned + already_damaged + already_missing
+        booked_qty = int(bi['quantity'])
+        remaining_qty = booked_qty - total_accounted
+        
+        print(f"\nItem: {item_name} ({item_id})")
+        print(f"  Booked Quantity     : {booked_qty}")
+        print(f"  Already Returned    : {already_returned}")
+        print(f"  Already Damaged     : {already_damaged}")
+        print(f"  Already Missing     : {already_missing}")
+        print(f"  Remaining to Account: {remaining_qty}")
+        
+        if remaining_qty <= 0:
+            print("  [INFO] All quantities of this item are already fully accounted for.")
+            continue
+            
+        print(f"Enter return details for '{item_name}' (Press Enter with empty to skip this item):")
+        ret_qty_str = input("  Quantity Returned in Good Condition: ").strip()
+        if not ret_qty_str:
+            print("  [INFO] Skipped return record for this item.")
+            continue
+            
+        dmg_qty_str = input("  Quantity Damaged: ").strip() or "0"
+        mis_qty_str = input("  Quantity Missing: ").strip() or "0"
+        
+        try:
+            ret_qty = int(ret_qty_str)
+            dmg_qty = int(dmg_qty_str)
+            mis_qty = int(mis_qty_str)
+            
+            if ret_qty < 0 or dmg_qty < 0 or mis_qty < 0:
+                print("  [ERROR] Quantities cannot be negative.")
+                continue
+                
+            total_input = ret_qty + dmg_qty + mis_qty
+            if total_input <= 0:
+                print("  [ERROR] Total quantity entered must be greater than zero.")
+                continue
+                
+            if total_input > remaining_qty:
+                print(f"  [ERROR] Return quantity greater than issued quantity. (Remaining to account: {remaining_qty})")
+                continue
+        except ValueError:
+            print("  [ERROR] Invalid numeric input. Item skipped.")
+            continue
+            
+        late_charges_str = input("  Enter Late Charges (Rs.) [0]: ").strip() or "0"
+        extra_charges_str = input("  Enter Extra Charges (Rs.) [0]: ").strip() or "0"
+        
+        try:
+            late_charges = Decimal(late_charges_str)
+            extra_charges = Decimal(extra_charges_str)
+            if late_charges < 0 or extra_charges < 0:
+                print("  [ERROR] Charges cannot be negative.")
+                continue
+        except Exception as e:
+            print(f"  [ERROR] Invalid charges: {e}. Item skipped.")
+            continue
+            
+        return_id = generate_id("R", returns + returns_added, "return_id")
+        new_return = {
+            "return_id": return_id,
+            "booking_id": booking['booking_id'],
+            "item_id": item_id,
+            "returned_quantity": ret_qty,
+            "damaged_quantity": dmg_qty,
+            "missing_quantity": mis_qty,
+            "late_charges": late_charges,
+            "extra_charges": extra_charges
+        }
+        
+        returns_added.append(new_return)
+        any_return_recorded = True
+        print(f"  [SUCCESS] Return record '{return_id}' prepared for '{item_name}' (Returned: {ret_qty}, Damaged: {dmg_qty}, Missing: {mis_qty})")
+        
+        if dmg_qty > 0:
+            units = load_json('equipment_units.json')
+            if units:
+                avail_units = [u for u in units if u['item_id'] == item_id and u['status'] == 'Available']
+                if avail_units:
+                    print(f"\n  Found {len(avail_units)} 'Available' equipment units for '{item_name}'.")
+                    print(f"  You reported {dmg_qty} damaged unit(s). Would you like to mark specific unit(s) as Broken/Maintenance now?")
+                    u_choice = input("  Enter 'y' to choose specific units, or press Enter to skip unit updates: ").strip().lower()
+                    if u_choice == 'y':
+                        marked_count = 0
+                        for u_idx, u in enumerate(avail_units):
+                            if marked_count >= dmg_qty:
+                                break
+                            print(f"  {u_idx+1}. Unit ID: {u['unit_id']} | Name: {u['unit_name']}")
+                        
+                        to_update_ids = []
+                        while len(to_update_ids) < dmg_qty:
+                            u_sel = input(f"  Select unit to mark (1-{len(avail_units)}) or enter 0 to stop: ").strip()
+                            if u_sel == '0' or not u_sel:
+                                break
+                            try:
+                                sel_idx = int(u_sel) - 1
+                                if 0 <= sel_idx < len(avail_units):
+                                    selected_unit = avail_units[sel_idx]
+                                    if selected_unit['unit_id'] in to_update_ids:
+                                        print("  Unit already selected.")
+                                        continue
+                                    to_update_ids.append(selected_unit['unit_id'])
+                                else:
+                                    print("  Invalid selection.")
+                            except ValueError:
+                                print("  Please enter a number.")
+                                
+                        if to_update_ids:
+                            new_status = get_validated_input("  Set status for selected unit(s)", ["Maintenance", "Broken"])
+                            for u in units:
+                                if u['unit_id'] in to_update_ids:
+                                    u['status'] = new_status
+                            save_json('equipment_units.json', units)
+                            print(f"  [SUCCESS] Updated status of {len(to_update_ids)} unit(s) to '{new_status}'.")
+                            
+    if any_return_recorded:
+        returns.extend(returns_added)
+        total_additional_charges = sum(r['late_charges'] + r['extra_charges'] for r in returns_added)
+        booking['remaining_amount'] += total_additional_charges
+        
+        if save_json('returns.json', returns) and save_json('bookings.json', bookings):
+            print(f"\n[SUCCESS] {len(returns_added)} return record(s) saved successfully!")
+            print(f"Total late/extra charges added: Rs.{total_additional_charges}")
+            print(f"Updated Booking Remaining Balance: Rs.{booking['remaining_amount']}")
+        else:
+            print("[ERROR] Failed to save returns or booking details.")
+    else:
+        print("\n[INFO] No return records were created.")
+
+def close_booking():
+    bookings = load_json('bookings.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    print("\n--- Close Booking ---")
+    booking = find_record_by_name_or_id(bookings, "booking_id", "delivery_date")
+    if not booking:
+        return
+        
+    if booking['status'] == 'Cancelled':
+        print("[ERROR] Cannot close a cancelled booking.")
+        return
+    if booking['status'] == 'Closed':
+        print("[INFO] Booking is already closed.")
+        return
+        
+    booking_items = load_json('booking_items.json')
+    returns = load_json('returns.json')
+    
+    if booking_items is None or returns is None:
+        return
+        
+    items_in_booking = [bi for bi in booking_items if bi['booking_id'] == booking['booking_id']]
+    if not items_in_booking:
+        print("[ERROR] No items found in this booking. Booking can be cancelled but not closed normally.")
+        return
+        
+    all_accounted = True
+    any_missing = False
+    total_missing_count = 0
+    unreturned_items = []
+    
+    for bi in items_in_booking:
+        item_id = bi['item_id']
+        item_returns = [r for r in returns if r['booking_id'] == booking['booking_id'] and r['item_id'] == item_id]
+        
+        already_returned = sum(r['returned_quantity'] for r in item_returns)
+        already_damaged = sum(r['damaged_quantity'] for r in item_returns)
+        already_missing = sum(r['missing_quantity'] for r in item_returns)
+        
+        total_accounted = already_returned + already_damaged + already_missing
+        booked_qty = int(bi['quantity'])
+        
+        if total_accounted < booked_qty:
+            all_accounted = False
+            unreturned_items.append((item_id, booked_qty - total_accounted))
+            
+        if already_missing > 0:
+            any_missing = True
+            total_missing_count += already_missing
+            
+    if not all_accounted:
+        print("\n[ERROR] Prevent closing booking if items are missing / unreturned.")
+        print("The following items have not been fully returned or accounted for:")
+        for item_id, unret_qty in unreturned_items:
+            print(f"  - Item ID {item_id}: {unret_qty} unit(s) still outstanding.")
+        return
+        
+    if any_missing:
+        print(f"\n[ERROR] Prevent closing booking if items are missing.")
+        print(f"There are {total_missing_count} item(s) marked as MISSING in the return records for this booking.")
+        print("Missing items must be returned or resolved (e.g. replaced or paid for) before closing the booking.")
+        return
+        
+    if booking['remaining_amount'] > 0:
+        print(f"\n[WARNING] This booking has an outstanding balance of Rs.{booking['remaining_amount']}.")
+        confirm_close = input("Would you still like to close it? (y/n): ").strip().lower()
+        if confirm_close != 'y':
+            print("[INFO] Closing cancelled.")
+            return
+    else:
+        confirm_close = input(f"Are you sure you want to close booking '{booking['booking_id']}'? (y/n): ").strip().lower()
+        if confirm_close != 'y':
+            print("[INFO] Closing cancelled.")
+            return
+            
+    booking['status'] = 'Closed'
+    if save_json('bookings.json', bookings):
+        print(f"\n[SUCCESS] Booking '{booking['booking_id']}' has been marked as CLOSED.")
+    else:
+        print("[ERROR] Failed to update booking status.")
+
+def payments_returns_menu():
+    while True:
+        print("\n--- Payments, Returns & Damage Tracking ---")
+        print("1. Record Payment (Full/Partial)")
+        print("2. Apply Discount to Booking")
+        print("3. Record Return & Damage")
+        print("4. Close Booking")
+        print("5. Back to Main Menu")
+        
+        choice = input("\nSelect an Option (1-5): ")
+        if choice == '1': record_payment()
+        elif choice == '2': apply_discount_to_booking()
+        elif choice == '3': record_return()
+        elif choice == '4': close_booking()
+        elif choice == '5': break
+        else: print("Invalid choice, please select 1-5.")
 
 def booking_menu():
     while True:
@@ -941,7 +1356,7 @@ def show_available_items_cli():
     for item in inventory:
         avail = calculate_item_availability(item['item_id'], start_str, end_str)
         if avail > 0:
-            print(f"{item['item_id']:<8} | {item['name']:<25} | {item['category']:<15} | {avail:<15} | ₹{item['rent_per_day']:<10}")
+            print(f"{item['item_id']:<8} | {item['name']:<25} | {item['category']:<15} | {avail:<15} | Rs.{item['rent_per_day']:<10}")
             count += 1
     if count == 0:
         print("No items available during this period.")
@@ -1042,9 +1457,10 @@ def main_menu():
         print("3. Equipment Unit Management")
         print("4. Booking Management")
         print("5. Availability & Scheduling")
-        print("6. Exit")
+        print("6. Payments, Returns & Damage Tracking")
+        print("7. Exit")
         
-        choice = input("\nSelect an Option (1-6): ")
+        choice = input("\nSelect an Option (1-7): ")
 
         if choice == '1':
             customer_menu()
@@ -1057,10 +1473,12 @@ def main_menu():
         elif choice == '5':
             availability_menu()
         elif choice == '6':
+            payments_returns_menu()
+        elif choice == '7':
             print("Thank you for using the system. Goodbye!")
             break
         else:
-            print("Invalid choice, please select 1-6.")
+            print("Invalid choice, please select 1-7.")
 
 def customer_menu():
     while True:
