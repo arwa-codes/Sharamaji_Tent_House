@@ -1445,6 +1445,243 @@ def availability_menu():
         elif choice == '5': break
         else: print("Invalid choice, please select 1-5.")
 
+def show_todays_deliveries():
+    bookings = load_json('bookings.json')
+    customers = load_json('customers.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    todays = [b for b in bookings if b['delivery_date'] == today_str and b.get('status') != 'Cancelled']
+    
+    print(f"\n--- Today's Deliveries ({today_str}) ---")
+    if not todays:
+        print("No deliveries scheduled for today.")
+        return
+        
+    print("="*95)
+    print(f"{'Booking ID':<12} | {'Customer Name':<25} | {'Event Type':<15} | {'Location':<25} | {'Total (Rs.)':<10}")
+    print("-" * 95)
+    for b in todays:
+        cust = next((c for c in customers if c['customer_id'] == b['customer_id']), None)
+        cust_name = cust['name'] if cust else "Unknown"
+        print(f"{b['booking_id']:<12} | {cust_name:<25} | {b.get('event_type', 'N/A'):<15} | {b.get('event_location', 'N/A'):<25} | Rs.{b['total_amount']:<9}")
+    print("="*95)
+
+def show_todays_returns():
+    bookings = load_json('bookings.json')
+    customers = load_json('customers.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    todays = [b for b in bookings if b['return_date'] == today_str and b.get('status') != 'Cancelled']
+    
+    print(f"\n--- Today's Returns ({today_str}) ---")
+    if not todays:
+        print("No returns scheduled for today.")
+        return
+        
+    print("="*95)
+    print(f"{'Booking ID':<12} | {'Customer Name':<25} | {'Status':<12} | {'Remaining (Rs.)':<16} | {'Location':<20}")
+    print("-" * 95)
+    for b in todays:
+        cust = next((c for c in customers if c['customer_id'] == b['customer_id']), None)
+        cust_name = cust['name'] if cust else "Unknown"
+        print(f"{b['booking_id']:<12} | {cust_name:<25} | {b['status']:<12} | Rs.{b['remaining_amount']:<13} | {b.get('event_location', 'N/A'):<20}")
+    print("="*95)
+
+def show_pending_payments():
+    bookings = load_json('bookings.json')
+    customers = load_json('customers.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings found.")
+        return
+        
+    pendings = [b for b in bookings if b['remaining_amount'] > 0 and b.get('status') != 'Cancelled']
+    
+    print("\n--- Pending Payments ---")
+    if not pendings:
+        print("No pending payments found.")
+        return
+        
+    print("="*105)
+    print(f"{'Booking ID':<12} | {'Customer Name':<25} | {'Phone':<15} | {'Delivery Date':<15} | {'Total (Rs.)':<13} | {'Remaining (Rs.)':<15}")
+    print("-" * 105)
+    for b in pendings:
+        cust = next((c for c in customers if c['customer_id'] == b['customer_id']), None)
+        cust_name = cust['name'] if cust else "Unknown"
+        phone = cust['phone'] if cust else "N/A"
+        print(f"{b['booking_id']:<12} | {cust_name:<25} | {phone:<15} | {b['delivery_date']:<15} | Rs.{b['total_amount']:<10} | Rs.{b['remaining_amount']:<12}")
+    print("="*105)
+
+def show_available_inventory_today():
+    inventory = load_json('inventory.json')
+    if not inventory:
+        if inventory is None: return
+        print("\nInventory is empty.")
+        return
+        
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    
+    print(f"\n--- Available Inventory Today ({today_str}) ---")
+    print("="*95)
+    print(f"{'Item ID':<8} | {'Item Name':<25} | {'Category':<15} | {'Catalog Qty':<12} | {'Unavailable':<12} | {'Available':<10}")
+    print("-" * 95)
+    for item in inventory:
+        units = load_json('equipment_units.json')
+        total_unavailable = len([u for u in units if u['item_id'] == item['item_id'] and u['status'] in ['Maintenance', 'Broken']])
+        avail = calculate_item_availability(item['item_id'], today_str, today_str)
+        print(f"{item['item_id']:<8} | {item['name']:<25} | {item['category']:<15} | {item['total_quantity']:<12} | {total_unavailable:<12} | {avail:<10}")
+    print("="*95)
+
+def show_booking_summary():
+    bookings = load_json('bookings.json')
+    if not bookings:
+        if bookings is None: return
+        print("\nNo bookings recorded.")
+        return
+        
+    total = len(bookings)
+    confirmed = sum(1 for b in bookings if b['status'] == 'Confirmed')
+    cancelled = sum(1 for b in bookings if b['status'] == 'Cancelled')
+    closed = sum(1 for b in bookings if b['status'] == 'Closed')
+    
+    print("\n--- Booking Summary Dashboard ---")
+    print(f"Total Bookings Registered : {total}")
+    print(f"Active Bookings (Confirmed): {confirmed}")
+    print(f"Completed Bookings (Closed) : {closed}")
+    print(f"Cancelled Bookings         : {cancelled}")
+    print("-" * 40)
+
+def show_customer_booking_history():
+    customers = load_json('customers.json')
+    bookings = load_json('bookings.json')
+    payments = load_json('payments.json')
+    
+    if not customers or not bookings:
+        print("\nNo customers or bookings found.")
+        return
+        
+    print("\n--- Customer Booking History ---")
+    cust = find_record_by_name_or_id(customers, "customer_id", "name")
+    if not cust:
+        return
+        
+    cust_bookings = [b for b in bookings if b['customer_id'] == cust['customer_id']]
+    
+    print(f"\nBooking History for Customer: {cust['name']} ({cust['customer_id']})")
+    print(f"Phone: {cust['phone']} | Address: {cust['address']}")
+    
+    if not cust_bookings:
+        print("No bookings found for this customer.")
+        return
+        
+    print("="*105)
+    print(f"{'Booking ID':<12} | {'Delivery Date':<12} | {'Return Date':<12} | {'Total (Rs.)':<12} | {'Remaining (Rs.)':<16} | {'Status':<10}")
+    print("-" * 105)
+    for b in cust_bookings:
+        print(f"{b['booking_id']:<12} | {b['delivery_date']:<12} | {b['return_date']:<12} | Rs.{b['total_amount']:<9} | Rs.{b['remaining_amount']:<13} | {b['status']:<10}")
+        
+        b_payments = [p for p in payments if p['booking_id'] == b['booking_id']]
+        if b_payments:
+            print("  Payments:")
+            for p in b_payments:
+                print(f"    - ID: {p['payment_id']} | Date: {p['payment_date']} | Amount: Rs.{p['payment_amount']}")
+    print("="*105)
+
+def show_damage_report():
+    returns = load_json('returns.json')
+    inventory = load_json('inventory.json')
+    
+    if not returns:
+        if returns is None: return
+        print("\nNo return records found.")
+        return
+        
+    damage_records = [r for r in returns if r['damaged_quantity'] > 0 or r['missing_quantity'] > 0]
+    
+    print("\n--- Damage & Missing Items Report ---")
+    if not damage_records:
+        print("No damaged or missing items recorded.")
+        return
+        
+    print("="*105)
+    print(f"{'Return ID':<10} | {'Booking ID':<12} | {'Item Name (ID)':<30} | {'Damaged':<8} | {'Missing':<8} | {'Late (Rs.)':<12} | {'Extra (Rs.)':<12}")
+    print("-" * 105)
+    for r in damage_records:
+        item = next((i for i in inventory if i['item_id'] == r['item_id']), None)
+        item_str = f"{item['name']} ({r['item_id']})" if item else r['item_id']
+        print(f"{r['return_id']:<10} | {r['booking_id']:<12} | {item_str:<30} | {r['damaged_quantity']:<8} | {r['missing_quantity']:<8} | Rs.{r['late_charges']:<9} | Rs.{r['extra_charges']:<9}")
+    print("="*105)
+
+def show_revenue_summary():
+    bookings = load_json('bookings.json')
+    payments = load_json('payments.json')
+    returns = load_json('returns.json')
+    
+    if bookings is None or payments is None or returns is None:
+        return
+        
+    active_bookings = [b for b in bookings if b['status'] != 'Cancelled']
+    
+    total_rent = sum(b['total_amount'] for b in active_bookings)
+    total_discounts = sum(b['discount'] for b in active_bookings)
+    total_deposits = sum(b['deposit_paid'] for b in active_bookings)
+    
+    active_booking_ids = set(b['booking_id'] for b in active_bookings)
+    active_returns = [r for r in returns if r['booking_id'] in active_booking_ids]
+    
+    total_late = sum(r['late_charges'] for r in active_returns)
+    total_extra = sum(r['extra_charges'] for r in active_returns)
+    
+    subsequent_collected = sum(p['payment_amount'] for p in payments if p['booking_id'] in active_booking_ids)
+    
+    total_booked_revenue = total_rent + total_late + total_extra - total_discounts
+    total_collected_revenue = total_deposits + subsequent_collected
+    total_pending_revenue = sum(b['remaining_amount'] for b in active_bookings)
+    
+    print("\n--- Financial Revenue Summary ---")
+    print(f"Total Base Rent Booked      : Rs.{total_rent}")
+    print(f"Total Additional Late Charges: Rs.{total_late}")
+    print(f"Total Additional Extra Charge: Rs.{total_extra}")
+    print(f"Total Discounts Given       : Rs.-{total_discounts}")
+    print("-" * 40)
+    print(f"Total Booked Net Revenue    : Rs.{total_booked_revenue}")
+    print(f"Total Collected Revenue     : Rs.{total_collected_revenue} (Deposits: Rs.{total_deposits}, Subsequent: Rs.{subsequent_collected})")
+    print(f"Total Outstanding Balance   : Rs.{total_pending_revenue}")
+    print("=" * 40)
+
+def reports_menu():
+    while True:
+        print("\n--- Reports & Dashboard ---")
+        print("1. Today's Deliveries")
+        print("2. Today's Returns")
+        print("3. Show Pending Payments")
+        print("4. Show Available Inventory Today")
+        print("5. Booking Summary Dashboard")
+        print("6. Customer Booking History")
+        print("7. Damage & Missing Items Report")
+        print("8. Revenue Summary")
+        print("9. Back to Main Menu")
+        
+        choice = input("\nSelect an Option (1-9): ")
+        if choice == '1': show_todays_deliveries()
+        elif choice == '2': show_todays_returns()
+        elif choice == '3': show_pending_payments()
+        elif choice == '4': show_available_inventory_today()
+        elif choice == '5': show_booking_summary()
+        elif choice == '6': show_customer_booking_history()
+        elif choice == '7': show_damage_report()
+        elif choice == '8': show_revenue_summary()
+        elif choice == '9': break
+        else: print("Invalid choice, please select 1-9.")
+
 # --- Main Program Menu ---
 
 def main_menu():
@@ -1458,9 +1695,10 @@ def main_menu():
         print("4. Booking Management")
         print("5. Availability & Scheduling")
         print("6. Payments, Returns & Damage Tracking")
-        print("7. Exit")
+        print("7. Reports & Dashboard")
+        print("8. Exit")
         
-        choice = input("\nSelect an Option (1-7): ")
+        choice = input("\nSelect an Option (1-8): ")
 
         if choice == '1':
             customer_menu()
@@ -1475,10 +1713,12 @@ def main_menu():
         elif choice == '6':
             payments_returns_menu()
         elif choice == '7':
+            reports_menu()
+        elif choice == '8':
             print("Thank you for using the system. Goodbye!")
             break
         else:
-            print("Invalid choice, please select 1-7.")
+            print("Invalid choice, please select 1-8.")
 
 def customer_menu():
     while True:
